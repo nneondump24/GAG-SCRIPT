@@ -1,0 +1,551 @@
+-- ServerScriptService/FruitAutomationOneScript.lua
+-- One-script Roblox setup for fruit collection automation.
+-- Place this Script in ServerScriptService.
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local StarterPlayer = game:GetService("StarterPlayer")
+
+local CONFIG = {
+	FruitTypes = {
+		"Apple",
+		"Blueberry",
+		"Carrot",
+		"Mango",
+		"Strawberry",
+	},
+	Mutations = {
+		"Wet",
+		"Shocked",
+		"Frozen",
+		"Chilled",
+		"Twisted",
+		"Gold",
+		"Rainbow",
+		"Celestial",
+		"Moonlit",
+		"Bloodlit",
+		"Pollinated",
+		"Zombified",
+		"Disco",
+		"Voidtouched",
+		"Dawnbound",
+		"HoneyGlazed",
+		"Plasma",
+		"Sundried",
+		"Aurora",
+		"Verdant",
+	},
+	Variants = {
+		"Normal",
+		"Gold",
+		"Rainbow",
+		"Silver",
+	},
+	ScanInterval = 0.3,
+	CollectionRadius = 14,
+}
+
+local function makeDefaultSettings()
+	local settings = {
+		fruits = {},
+		whitelist = {},
+		blacklist = {},
+		variants = {},
+		whitelistEnabled = false,
+		blacklistEnabled = false,
+		ignoreMutationFilter = false,
+	}
+
+	for _, fruit in ipairs(CONFIG.FruitTypes) do
+		settings.fruits[fruit] = true
+	end
+
+	for _, mutation in ipairs(CONFIG.Mutations) do
+		settings.whitelist[mutation] = false
+		settings.blacklist[mutation] = false
+	end
+
+	for _, variant in ipairs(CONFIG.Variants) do
+		settings.variants[variant] = true
+	end
+
+	return settings
+end
+
+local function cloneTableDeep(tbl)
+	local result = {}
+	for k, v in pairs(tbl) do
+		if type(v) == "table" then
+			result[k] = cloneTableDeep(v)
+		else
+			result[k] = v
+		end
+	end
+	return result
+end
+
+local PlayersState = {}
+
+local function getPlayerSettings(player)
+	if not PlayersState[player] then
+		PlayersState[player] = makeDefaultSettings()
+	end
+	return PlayersState[player]
+end
+
+local function copySettingsForClient(settings)
+	local out = {
+		fruits = {},
+		whitelist = {},
+		blacklist = {},
+		variants = {},
+		whitelistEnabled = settings.whitelistEnabled,
+		blacklistEnabled = settings.blacklistEnabled,
+		ignoreMutationFilter = settings.ignoreMutationFilter,
+	}
+
+	for k, v in pairs(settings.fruits) do
+		out.fruits[k] = v
+	end
+	for k, v in pairs(settings.whitelist) do
+		out.whitelist[k] = v
+	end
+	for k, v in pairs(settings.blacklist) do
+		out.blacklist[k] = v
+	end
+	for k, v in pairs(settings.variants) do
+		out.variants[k] = v
+	end
+
+	return out
+end
+
+local function validateCategory(category, key, value)
+	if category == "toggle" then
+		return key == "whitelistEnabled" or key == "blacklistEnabled" or key == "ignoreMutationFilter"
+	end
+
+	if category == "fruits" then
+		for _, fruit in ipairs(CONFIG.FruitTypes) do
+			if fruit == key then
+				return type(value) == "boolean"
+			end
+		end
+		return false
+	end
+
+	if category == "whitelist" then
+		for _, mutation in ipairs(CONFIG.Mutations) do
+			if mutation == key then
+				return type(value) == "boolean"
+			end
+		end
+		return false
+	end
+
+	if category == "blacklist" then
+		for _, mutation in ipairs(CONFIG.Mutations) do
+			if mutation == key then
+				return type(value) == "boolean"
+			end
+		end
+		return false
+	end
+
+	if category == "variants" then
+		for _, variant in ipairs(CONFIG.Variants) do
+			if variant == key then
+				return type(value) == "boolean"
+			end
+		end
+		return false
+	end
+
+	return false
+end
+
+local function updatePlayerSetting(player, category, key, value)
+	local settings = getPlayerSettings(player)
+
+	if category == "toggle" then
+		if key == "whitelistEnabled" then
+			settings.whitelistEnabled = value
+			return true
+		elseif key == "blacklistEnabled" then
+			settings.blacklistEnabled = value
+			return true
+		elseif key == "ignoreMutationFilter" then
+			settings.ignoreMutationFilter = value
+			return true
+		end
+		return false
+	end
+
+	if validateCategory(category, key, value) then
+		settings[category][key] = value
+		return true
+	end
+
+	return false
+end
+
+local function isFruitSelected(settings, fruitType)
+	return type(fruitType) == "string" and settings.fruits[fruitType] == true
+end
+
+local function isMutationBlacklisted(settings, mutation)
+	return settings.blacklistEnabled == true and mutation ~= nil and settings.blacklist[mutation] == true
+end
+
+local function passesMutationFilter(settings, mutation)
+	if mutation == nil then
+		mutation = "None"
+	end
+
+	-- 2. Reject blacklisted mutations first
+	if isMutationBlacklisted(settings, mutation) then
+		return false
+	end
+
+	-- 3. Ignore mutation filter bypasses whitelist requirement
+	if settings.ignoreMutationFilter == true then
+		return true
+	end
+
+	-- 4. If whitelist is enabled, mutation must be allowed
+	if settings.whitelistEnabled == true then
+		return settings.whitelist[mutation] == true
+	end
+
+	return true
+end
+
+local function passesVariantFilter(settings, variantValue)
+	if type(variantValue) ~= "string" then
+		return false
+	end
+
+	return settings.variants[variantValue] == true
+end
+
+local function passesFruitFilter(fruit, settings)
+	if typeof(fruit) ~= "Instance" or not fruit:IsA("BasePart") then
+		return false
+	end
+
+	local fruitType = fruit:GetAttribute("FruitType")
+	local mutation = fruit:GetAttribute("Mutation")
+	local variant = fruit:GetAttribute("Variant") or "Normal"
+
+	-- 1. Check fruit type selection
+	if not isFruitSelected(settings, fruitType) then
+		return false
+	end
+
+	-- 2. Reject blacklisted mutations
+	if isMutationBlacklisted(settings, mutation) then
+		return false
+	end
+
+	-- 3. Ignore mutation filter bypasses whitelist requirement
+	if settings.ignoreMutationFilter == true then
+		-- still verify variant
+		return passesVariantFilter(settings, variant)
+	end
+
+	-- 4. Normal whitelist check when enabled
+	if settings.whitelistEnabled == true then
+		if not passesMutationFilter(settings, mutation) then
+			return false
+		end
+	end
+
+	-- 5. Verify selected variant
+	if not passesVariantFilter(settings, variant) then
+		return false
+	end
+
+	-- 6. Passes all checks
+	return true
+end
+
+local function normalizeMutationsList(list)
+	local out = {}
+	for _, name in ipairs(list) do
+		out[name] = true
+	end
+	return out
+end
+
+local function createRemoteFolder()
+	local folder = ReplicatedStorage:FindFirstChild("FruitAutomation")
+	if not folder then
+		folder = Instance.new("Folder")
+		folder.Name = "FruitAutomation"
+		folder.Parent = ReplicatedStorage
+	end
+
+	local remoteEvent = folder:FindFirstChild("FruitAutomationUpdate")
+	if not remoteEvent then
+		remoteEvent = Instance.new("RemoteEvent")
+		remoteEvent.Name = "FruitAutomationUpdate"
+		remoteEvent.Parent = folder
+	end
+
+	local remoteFunction = folder:FindFirstChild("FruitAutomationState")
+	if not remoteFunction then
+		remoteFunction = Instance.new("RemoteFunction")
+		remoteFunction.Name = "FruitAutomationState"
+		remoteFunction.Parent = folder
+	end
+
+	return folder, remoteEvent, remoteFunction
+end
+
+local FruitAutomationFolder, UpdateRemote, StateRemote = createRemoteFolder()
+
+StateRemote.OnServerInvoke = function(player)
+	local settings = getPlayerSettings(player)
+	return {
+		config = {
+			fruitTypes = CONFIG.FruitTypes,
+			mutations = CONFIG.Mutations,
+			variants = CONFIG.Variants,
+		},
+		settings = copySettingsForClient(settings),
+	}
+end
+
+UpdateRemote.OnServerEvent:Connect(function(player, category, key, value)
+	if not player or not player:IsA("Player") then
+		return
+	end
+	updatePlayerSetting(player, category, key, value)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	PlayersState[player] = nil
+end)
+
+local function collectFruit(player, fruit)
+	if not fruit or not fruit.Parent then
+		return false
+	end
+
+	-- Replace this section with your game's real collection mechanic if needed.
+	-- This demo simply destroys the fruit and grants a counter.
+	local collected = player:GetAttribute("CollectedFruitCount") or 0
+	player:SetAttribute("CollectedFruitCount", collected + 1)
+
+	fruit:Destroy()
+	return true
+end
+
+local function getEligibleFruitParts()
+	local result = {}
+	for _, descendant in ipairs(workspace:GetDescendants()) do
+		if descendant:IsA("BasePart") then
+			local hasFruitType = descendant:GetAttribute("FruitType") ~= nil
+			local hasMutation = descendant:GetAttribute("Mutation") ~= nil
+			local hasVariant = descendant:GetAttribute("Variant") ~= nil
+			-- Allow fruit parts to be recognized even if a custom tag is used.
+			local isTagged = descendant:GetAttribute("CollectibleFruit") == true
+			if hasFruitType or hasMutation or hasVariant or isTagged then
+				table.insert(result, descendant)
+			end
+		end
+	end
+	return result
+end
+
+task.spawn(function()
+	while true do
+		task.wait(CONFIG.ScanInterval)
+
+		for _, player in ipairs(Players:GetPlayers()) do
+			local character = player.Character
+			local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+			if not rootPart then
+				continue
+			end
+
+			local settings = getPlayerSettings(player)
+			local fruitList = getEligibleFruitParts()
+
+			for _, fruit in ipairs(fruitList) do
+				if fruit:IsDescendantOf(workspace) and fruit.Parent then
+					local distance = (fruit.Position - rootPart.Position).Magnitude
+					if distance <= CONFIG.CollectionRadius then
+						local ok, result = pcall(function()
+							return passesFruitFilter(fruit, settings)
+						end)
+
+						if ok and result then
+							local success, err = pcall(collectFruit, player, fruit)
+							if not success then
+								warn(("Fruit collection failed for %s: %s"):format(player.Name, tostring(err)))
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+end)
+
+-- Create a local script in StarterPlayerScripts for the UI.
+local uiScript = Instance.new("LocalScript")
+uiScript.Name = "FruitAutomationUI"
+uiScript.Source = [[
+	local Players = game:GetService("Players")
+	local ReplicatedStorage = game:GetService("ReplicatedStorage")
+	local player = Players.LocalPlayer
+	local folder = ReplicatedStorage:WaitForChild("FruitAutomation")
+	local stateRemote = folder:WaitForChild("FruitAutomationState")
+	local updateRemote = folder:WaitForChild("FruitAutomationUpdate")
+
+	local state = stateRemote:InvokeServer()
+	local config = state.config
+	local settings = state.settings
+
+	local colors = {
+		background = Color3.fromRGB(18, 20, 28),
+		panel = Color3.fromRGB(29, 33, 45),
+		panel2 = Color3.fromRGB(39, 43, 60),
+		accent = Color3.fromRGB(126, 87, 255),
+		blue = Color3.fromRGB(84, 133, 255),
+		text = Color3.fromRGB(240, 242, 250),
+		muted = Color3.fromRGB(162, 168, 190),
+		border = Color3.fromRGB(50, 56, 70),
+		on = Color3.fromRGB(109, 79, 255),
+		off = Color3.fromRGB(51, 55, 68),
+	}
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "FruitAutomation"
+	screenGui.ResetOnSpawn = false
+	screenGui.IgnoreGuiInset = true
+	screenGui.Parent = player:WaitForChild("PlayerGui")
+
+	local main = Instance.new("Frame")
+	main.Size = UDim2.new(0, 720, 0, 520)
+	main.Position = UDim2.new(0.5, -360, 0.5, -260)
+	main.BackgroundColor3 = colors.background
+	main.BorderSizePixel = 0
+	main.Parent = screenGui
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 16)
+	corner.Parent = main
+
+	local sidebar = Instance.new("Frame")
+	sidebar.Size = UDim2.new(0, 160, 1, 0)
+	sidebar.BackgroundColor3 = colors.panel
+	sidebar.BorderSizePixel = 0
+	sidebar.Parent = main
+	local sidebarCorner = Instance.new("UICorner")
+	sidebarCorner.CornerRadius = UDim.new(0, 16)
+	sidebarCorner.Parent = sidebar
+
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Size = UDim2.new(1, -20, 0, 28)
+	titleLabel.Position = UDim2.new(0, 10, 0, 10)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Text = "Automation"
+	titleLabel.TextColor3 = colors.text
+	titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+	titleLabel.Font = Enum.Font.GothamBold
+	titleLabel.TextSize = 18
+	titleLabel.Parent = sidebar
+
+	local pageButtons = {}
+	local currentPage = "Fruits"
+
+	local function addSidebarButton(name, y)
+		local btn = Instance.new("TextButton")
+		btn.Size = UDim2.new(1, -20, 0, 30)
+		btn.Position = UDim2.new(0, 10, 0, y)
+		btn.BackgroundColor3 = colors.panel2
+		btn.Text = name
+		btn.TextColor3 = colors.text
+		btn.Font = Enum.Font.GothamBold
+		btn.TextSize = 13
+		btn.BorderSizePixel = 0
+		btn.Parent = sidebar
+		local c = Instance.new("UICorner")
+		c.CornerRadius = UDim.new(0, 8)
+		c.Parent = btn
+		table.insert(pageButtons, btn)
+
+		btn.MouseButton1Click:Connect(function()
+			currentPage = name
+			render()
+		end)
+	end
+
+	addSidebarButton("Fruits", 52)
+	addSidebarButton("Mutations", 88)
+
+	local content = Instance.new("Frame")
+	content.Size = UDim2.new(1, -160, 1, 0)
+	content.Position = UDim2.new(0, 160, 0, 0)
+	content.BackgroundTransparency = 1
+	content.Parent = main
+
+	local topBar = Instance.new("Frame")
+	topBar.Size = UDim2.new(1, -20, 0, 36)
+	topBar.Position = UDim2.new(0, 10, 0, 10)
+	topBar.BackgroundTransparency = 1
+	topBar.Parent = content
+
+	local searchBox = Instance.new("TextBox")
+	searchBox.Size = UDim2.new(1, -10, 0, 28)
+	searchBox.Position = UDim2.new(0, 5, 0, 3)
+	searchBox.BackgroundColor3 = colors.panel
+	searchBox.BorderSizePixel = 0
+	searchBox.Text = ""
+	searchBox.PlaceholderText = "Search settings..."
+	searchBox.TextColor3 = colors.text
+	searchBox.PlaceholderColor3 = colors.muted
+	searchBox.Font = Enum.Font.Gotham
+	searchBox.TextSize = 13
+	searchBox.Parent = topBar
+	local searchCorner = Instance.new("UICorner")
+	searchCorner.CornerRadius = UDim.new(0, 8)
+	searchCorner.Parent = searchBox
+
+	local scroll = Instance.new("ScrollingFrame")
+	scroll.Size = UDim2.new(1, -20, 1, -66)
+	scroll.Position = UDim2.new(0, 10, 0, 52)
+	scroll.BackgroundTransparency = 1
+	scroll.BorderSizePixel = 0
+	scroll.ScrollBarThickness = 6
+	scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+	scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+	scroll.Parent = content
+
+	local listLayout = Instance.new("UIListLayout")
+	listLayout.Padding = UDim.new(0, 10)
+	listLayout.Parent = scroll
+
+	local function sendUpdate(category, key, value)
+		updateRemote:FireServer(category, key, value)
+	end
+
+	local function createToggleRow(label, key)
+		local row = Instance.new("Frame")
+		row.Size = UDim2.new(1, 0, 0, 38)
+		row.BackgroundColor3 = colors.panel
+		row.BorderSizePixel = 0
+		row.Parent = scroll
+		local rowCorner = Instance.new("UICorner")
+		rowCorner.CornerRadius = UDim.new(0, 10)
+		rowCorner.Parent = row
+
+		local labelText = Instance.new("TextLabel")
+		labelText.Size = UDim2.new(1, -86, 1, 0)
+		labelText.Position = UDim2.new(0, 10, 0, 0)
+		labelText.BackgroundTransparency = 1
+		labelText.Text = label
+		labelText.TextColor3 = colors.text](#)_
+
