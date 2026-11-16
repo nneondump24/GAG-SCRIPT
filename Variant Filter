@@ -1,0 +1,11 @@
+local VariantFilter = {}
+
+function VariantFilter.IsAllowed(variant, settings)
+	if type(variant) ~= "string" then
+		return false
+	end
+
+	return settings.variants[variant] == true
+end
+
+return VariantFilter
