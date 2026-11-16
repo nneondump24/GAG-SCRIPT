@@ -1,0 +1,26 @@
+local MutationFilter = {}
+
+function MutationFilter.IsAllowed(mutation, settings)
+	if type(mutation) ~= "string" then
+		return false
+	end
+
+	-- Blacklist always takes priority.
+	if settings.blacklistEnabled
+		and settings.blacklist[mutation] == true then
+		return false
+	end
+
+	-- Ignore bypasses only the whitelist requirement.
+	if settings.ignoreMutationFilter then
+		return true
+	end
+
+	if settings.whitelistEnabled then
+		return settings.whitelist[mutation] == true
+	end
+
+	return true
+end
+
+return MutationFilter
